@@ -1,0 +1,21 @@
+name: BTC EMA PRO Telegram Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  telegram-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Telegram Test
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl --fail --silent --show-error \
+            -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${CHAT_ID}" \
+            --data-urlencode "text=BTC EMA PRO - Telegram Test Successful! EMA 9/21/50/200 | WMA 12/144 | VWAP | Volume MA 20" \
+            -o /dev/null
+          echo "Telegram notification sent successfully"
