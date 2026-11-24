@@ -15,6 +15,18 @@ function ema(rows, n) {
   for(let i=n;i<rows.length;i++) { v += (rows[i].close-v)*2/(n+1); out.push(v); }
   return out;
 }
+async function telegram(text){
+  const token=process.env.TELEGRAM_BOT_TOKEN, chat=process.env.TELEGRAM_CHAT_ID;
+  if(!token||!chat) throw Error('Telegram secrets missing');
+  for(let attempt=0;attempt<2;attempt++){
+    const res=await fetch(`https://api.telegram.org/bot${token}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:chat,text}),signal:AbortSignal.timeout(15000)});
+    const data=await res.json().catch(()=>({}));
+    if(res.ok&&data.ok===true)return;
+    const wait=Number(data.parameters?.retry_after||res.headers.get('retry-after'));
+    if(res.status===429&&attempt===0&&wait>0&&wait<=20){await new Promise(r=>setTimeout(r,(wait+1)*1000));continue;}
+    throw Error('Telegram HTTP '+res.status);
+  }
+}
 async function main(){
   const end = Math.floor(Date.now()/1000);
   const url = new URL(API);
@@ -74,11 +86,15 @@ async function main(){
   if(st&&st!==superTrend(i-1))signals.push(st===1?'SUPER STRONG POSITIVE':'SUPER STRONG NEGATIVE');
   if(d&&d!==direction(i-1))signals.push('CONFIRMED '+(d===1?'BUY':'SELL')+' ('+MODE.toUpperCase()+')');
   const volumeOK=volumesOK(i);
+  console.log(JSON.stringify({closeTime:new Date((r.time+PERIOD)*1000).toISOString(),price:r.close,ema9:e[9][i],ema21:e[21][i],ema50:e[50][i],ema200:e[200][i],wma12:w12[i],wma144:w144[i],vwap:vwap[i],volumeOK,signals}));
   if(signals.length){
-    webpush.setVapidDetails('https://asstrades-ship-it.github.io/btc-ema-pro/',process.env.VAPID_PUBLIC_KEY,process.env.VAPID_PRIVATE_KEY);
     const body=['BTCUSD | 5m | $'+r.close.toFixed(2),...([9,21,50,200].map(n=>'EMA '+n+': '+e[n][i].toFixed(2))), 'WMA 12: '+w12[i].toFixed(2), 'WMA 144: '+w144[i].toFixed(2), 'VWAP: '+(vwap[i]===null?'Unavailable':vwap[i].toFixed(2)), 'Volume: '+(volumeOK?'Above MA20':'Not confirmed'), 'Close: '+new Date((r.time+PERIOD)*1000).toISOString()].join('\n');
-    await webpush.sendNotification(JSON.parse(process.env.WEB_PUSH_SUBSCRIPTION),JSON.stringify({title:signals.join(' | '),body}),{TTL:300});
-    console.log('Push accepted');
+    const title='BTC EMA PRO | '+signals.join(' | ');
+    const results=await Promise.allSettled([
+      (async()=>{webpush.setVapidDetails('https://asstrades-ship-it.github.io/btc-ema-pro/',process.env.VAPID_PUBLIC_KEY,process.env.VAPID_PRIVATE_KEY);await webpush.sendNotification(JSON.parse(process.env.WEB_PUSH_SUBSCRIPTION),JSON.stringify({title,body}),{TTL:300,timeout:15000});})(),
+      telegram(title+'\n'+body)
+    ]);
+    results.forEach((result,j)=>{const channel=['Mobile Push','Telegram'][j];if(result.status==='fulfilled')console.log(channel+' accepted');else {console.error(channel+' failed',result.reason?.statusCode|| (j===1&&/^Telegram HTTP \d+$/.test(result.reason?.message)?result.reason.message:'delivery error'));process.exitCode=1;}});
   } else console.log('No eligible new signal');
   fs.writeFileSync(STATE+'.tmp',JSON.stringify({lastTime:r.time}));
   fs.renameSync(STATE+'.tmp',STATE);
