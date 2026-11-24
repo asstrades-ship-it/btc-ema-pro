@@ -1,0 +1,55 @@
+name: BTC EMA PRO Automatic Monitor
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: btc-ema-pro-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Web Push
+        run: npm install --no-save --package-lock=false web-push@3.6.7
+
+      - name: Run BTC EMA PRO Monitor
+        env:
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          WEB_PUSH_SUBSCRIPTION: ${{ secrets.WEB_PUSH_SUBSCRIPTION }}
+          SIGNAL_MODE: 'both'
+          VWAP_FILTER: 'true'
+          TREND_FILTER: 'true'
+          VOLUME_FILTER: 'true'
+        run: node btc-ema-monitor.js
+
+      - name: Save Signal State
+        if: ${{ always() }}
+        run: |
+          if [ -f btc-ema-state.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add btc-ema-state.json
+            if ! git diff --cached --quiet; then
+              git commit -m "Update BTC EMA signal state"
+              git pull --rebase origin main
+              git push origin HEAD:main
+            fi
+          fi
